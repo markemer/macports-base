@@ -4441,7 +4441,7 @@ proc mportclose {mport} {
         }
         dict unset pending_log_messages $mport
         set workername [ditem_key $mport workername]
-        $workername eval [list portutil::_async_cleanup]
+        catch {$workername eval [list portutil::_async_cleanup]}
         interp delete $workername
         #if {[info exists macports::extracted_portdirs($porturl)]} {
             # TODO port.tcl calls mportopen multiple times on the same port to
