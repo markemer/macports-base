@@ -57,7 +57,8 @@ namespace eval mport_fetch_thread {
                 switch -- $action {
                     debug -
                     notice {
-                        thread::send -async $progress_tid [list ui_${action} {*}$args]
+                        global progress_logid
+                        thread::send -async $progress_tid [list macports::ui_message_async $progress_logid $action {*}$args]
                     }
                     default {
                         global show_progress
@@ -110,27 +111,30 @@ namespace eval mport_fetch_thread {
                         fetch_archive {
                             # Try fetching an archive and signature from the given URLs,
                             # saving the results to outpath, until one of them succeeds.
-                            global show_progress progress_tid progress_inited current_url
+                            global show_progress progress_tid progress_inited progress_logid current_url
                             # Start silent, may be changed during the transfer.
                             set show_progress 0
                             set progress_inited 0
                             set progress_tid $result_tid
-                            lassign $opargs fixed_args credential_args urls outpath sigtypes maxfails
+                            lassign $opargs fixed_args credential_args urls outpath sigtypes maxfails progress_logid
                             set archive_fetched 0
                             set sig_fetched 0
                             set failed_sites 0
+                            set logphase archivefetch
                             foreach url $urls creds $credential_args {
                                 if {!$archive_fetched} {
                                     try {
                                         if {$show_progress} {
-                                            progress_handler notice "Attempting to fetch $url"
+                                            set msg_priority notice
                                         } else {
+                                            set msg_priority debug
                                             set current_url $url
                                         }
+                                        progress_handler $msg_priority $logphase "Attempting to fetch $url"
                                         curl fetch --progress progress_handler {*}$creds {*}$fixed_args $url ${outpath}.TMP
                                         set archive_fetched 1
                                     } on error {eMessage} {
-                                        progress_handler debug "Fetching $url failed: $eMessage"
+                                        progress_handler debug $logphase "Fetching $url failed: $eMessage"
                                         set result [list 1 $eMessage]
                                         incr failed_sites
                                         if {$cancelled || ($maxfails > 0 && $failed_sites >= $maxfails)} {
@@ -145,17 +149,19 @@ namespace eval mport_fetch_thread {
                                         set signature ${outpath}.${sigtype}
                                         try {
                                             if {$show_progress} {
-                                                progress_handler notice "Attempting to fetch $sigurl"
+                                                set msg_priority notice
                                             } else {
+                                                set msg_priority debug
                                                 set current_url $sigurl
                                             }
+                                            progress_handler $msg_priority $logphase "Attempting to fetch $sigurl"
                                             curl fetch --progress progress_handler {*}$creds {*}$fixed_args $sigurl $signature
                                             set sig_fetched 1
                                             set fetched_sigtype $sigtype
                                             set result [list 0 1]
                                             break
                                         } on error {eMessage} {
-                                            progress_handler debug "Fetching $sigurl failed: $eMessage"
+                                            progress_handler debug $logphase "Fetching $sigurl failed: $eMessage"
                                             set result [list 1 $eMessage]
                                             if {$cancelled} {
                                                 break
@@ -182,26 +188,29 @@ namespace eval mport_fetch_thread {
                         fetch_file {
                             # Try fetching the given URLs, saving the result to outpath, until
                             # one of them succeeds.
-                            global show_progress progress_tid progress_inited current_url
+                            global show_progress progress_tid progress_inited progress_logid current_url
                             # Start silent, may be changed during the transfer.
                             set show_progress 0
                             set progress_inited 0
                             set progress_tid $result_tid
-                            lassign $opargs fixed_args credential_args urls outpath
+                            lassign $opargs fixed_args credential_args urls outpath progress_logid
                             set fetched 0
+                            set logphase fetch
                             foreach url $urls creds $credential_args {
                                 try {
                                     if {$show_progress} {
-                                        progress_handler notice "Attempting to fetch $url"
+                                        set msg_priority notice
                                     } else {
+                                        set msg_priority debug
                                         set current_url $url
                                     }
+                                    progress_handler $msg_priority $logphase "Attempting to fetch $url"
                                     curl fetch --progress progress_handler {*}$creds {*}$fixed_args $url ${outpath}.TMP
                                     set fetched 1
                                     set result [list 0 1]
                                     break
                                 } on error {eMessage} {
-                                    progress_handler debug "Fetching $url failed: $eMessage"
+                                    progress_handler debug $logphase "Fetching $url failed: $eMessage"
                                     set result [list 1 $eMessage]
                                     if {$cancelled} {
                                         break

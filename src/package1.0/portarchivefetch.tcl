@@ -243,6 +243,7 @@ proc portarchivefetch::fetchfiles {{async no} args} {
     variable archivefetch_urls
     variable ::portfetch::urlmap
     variable async_job
+    variable async_logid
 
     if {[info exists async_job]} {
         if {$async} {
@@ -370,7 +371,7 @@ proc portarchivefetch::fetchfiles {{async no} args} {
                 set async_job [curlwrap_async fetch_archive $credentials $fetch_options $this_urlmap \
                         [lmap site $this_urlmap {portfetch::assemble_url \
                         [expr {[string index $site end] eq "/" ? $site : "${site}/"}]${archive.subdir} $archive}] \
-                        ${incoming_path}/${archive} $sigtypes $maxfails]
+                        ${incoming_path}/${archive} $sigtypes $maxfails $async_logid]
                 return 0
             } else {
                 foreach site $urlmap($url_var) {
@@ -499,13 +500,14 @@ proc portarchivefetch::archives_present {} {
 }
 
 # Start asynchronous fetch of archive
-proc portarchivefetch::archivefetch_async_start {} {
+proc portarchivefetch::archivefetch_async_start {logid} {
     global all_archive_files
     _archivefetch_start yes
     if {![info exists all_archive_files]} {
         # No files to fetch
         return 0
     }
+    variable async_logid $logid
     fetchfiles yes
 }
 

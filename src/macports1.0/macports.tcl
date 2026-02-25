@@ -105,7 +105,10 @@ namespace eval macports {
     variable open_mports [dict create]
 
     variable ui_priorities [list error warn msg notice info debug any]
+    variable ui_priority_prefixes [dict create]
     variable current_phase main
+    variable current_log_mport {}
+    variable pending_log_messages [dict create]
 
     variable ui_prefix {---> }
 
@@ -237,6 +240,7 @@ proc macports::init_logging {mport} {
         return 1
     }
     macports::_log_sysinfo
+    log_pending_messages $mport
     return 0
 }
 
@@ -253,6 +257,8 @@ proc macports::ch_logging {mport} {
     # Append to the file if it already exists
     set debuglog [open $debuglogname a]
     puts $debuglog version:1
+
+    variable current_log_mport $mport
 
     ui_debug "Starting logging for $portname @[dict get $portinfo version]_[dict get $portinfo revision][dict get $portinfo canonical_active_variants]"
 }
@@ -303,7 +309,7 @@ proc macports::push_log {mport} {
     if {![info exists logenabled]} {
         if {[macports::init_logging $mport] == 0} {
             set logenabled yes
-            set logstack [list [list $debuglog $debuglogname]]
+            set logstack [list [list $debuglog $debuglogname $mport]]
             return
         } else {
             set logenabled no
@@ -311,7 +317,7 @@ proc macports::push_log {mport} {
     }
     if {$logenabled} {
         if {[macports::init_logging $mport] == 0} {
-            lappend logstack [list $debuglog $debuglogname]
+            lappend logstack [list $debuglog $debuglogname $mport]
         }
     }
 }
@@ -324,13 +330,16 @@ proc macports::pop_log {} {
     variable logstack
     if {$logenabled && [llength $logstack] > 0} {
         variable debuglog; variable debuglogname
+        variable current_log_mport
         close $debuglog
         set logstack [lreplace ${logstack}[set logstack {}] end end]
         if {[llength $logstack] > 0} {
-            lassign [lindex $logstack end] debuglog debuglogname
+            lassign [lindex $logstack end] debuglog debuglogname current_log_mport
+            log_pending_messages $current_log_mport
         } else {
             unset debuglog
             unset debuglogname
+            set current_log_mport {}
         }
     }
 }
@@ -345,6 +354,43 @@ proc set_phase {phase} {
         set utc_time [clock format $sec -timezone :UTC -format "%Y-%m-%dT%T.${fraction}%z"]
         set local_time [clock format $sec -format {%+}]
         ui_debug "$phase phase started at $utc_time ($local_time)"
+    }
+}
+
+proc macports::log_pending_messages {mport} {
+    variable pending_log_messages
+    if {![dict exists $pending_log_messages $mport]} {
+        return
+    }
+    variable debuglog
+    foreach m [dict get $pending_log_messages $mport] {
+        lassign $m priority phase msg
+        set strprefix ":${priority}:${phase} "
+        foreach str [split $msg "\n"] {
+            puts $debuglog ${strprefix}${str}
+        }
+    }
+    dict set pending_log_messages $mport [list]
+}
+
+# Handle message from an asynchronous task which should not
+# necessarily go to the currently active log file.
+proc macports::ui_message_async {id priority phase msg} {
+    variable ui_priority_prefixes
+    set prefix [dict get $ui_priority_prefixes $priority]
+    variable channels
+    foreach chan $channels($priority) {
+        puts $chan ${prefix}${msg}
+    }
+    variable current_log_mport; variable debuglog
+    if {$id eq $current_log_mport && [info exists debuglog]} {
+        set strprefix ":${priority}:${phase} "
+        foreach str [split $msg "\n"] {
+            puts $debuglog ${strprefix}${str}
+        }
+    } else {
+        variable pending_log_messages
+        dict lappend pending_log_messages $id [list $priority $phase $msg]
     }
 }
 
@@ -419,11 +465,13 @@ proc macports::ui_init {priority args} {
     }
 
     # Simplify ui_$priority.
+    variable ui_priority_prefixes
     try {
         set prefix [ui_prefix $priority]
     } on error {} {
         set prefix [ui_prefix_default $priority]
     }
+    dict set ui_priority_prefixes $priority $prefix
     try {
         ::ui_init $priority $prefix $channels($priority) {*}$args
     } on error {} {
@@ -2925,14 +2973,14 @@ proc macports::async_fetch_mport {target mport} {
     if {[dict exists $no_build_targets $target] && ![global_option_isset ports_source_only]
         && ![_mportinstalled $mport]
     } then {
-        $workername eval [list portarchivefetch::archivefetch_async_start]
+        $workername eval [list portarchivefetch::archivefetch_async_start $mport]
     }
     if {([_target_needs_deps $target] && (![dict exists $no_build_targets $target]
          || (![global_option_isset ports_binary_only] && ![_mportinstalled $mport]
          && ![$workername eval [list _archive_available]])))
          || $target eq "mirror"
     } then {
-        $workername eval [list portfetch::fetch_async_start]
+        $workername eval [list portfetch::fetch_async_start $mport]
     }
 }
 
@@ -4376,11 +4424,11 @@ proc mportinfo {mport} {
 }
 
 proc mportclose {mport} {
-    global macports::open_mports
     #macports::extracted_portdirs
     set refcnt [ditem_key $mport refcnt]
     incr refcnt -1
     if {$refcnt <= 0} {
+        global macports::open_mports macports::pending_log_messages
         set porturl [ditem_key $mport porturl]
         if {[dict exists $open_mports $porturl]} {
             set mports_for_url [dict get $open_mports $porturl]
@@ -4391,6 +4439,7 @@ proc mportclose {mport} {
                 dict unset open_mports $porturl
             }
         }
+        dict unset pending_log_messages $mport
         set workername [ditem_key $mport workername]
         $workername eval [list portutil::_async_cleanup]
         interp delete $workername

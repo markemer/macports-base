@@ -455,6 +455,7 @@ proc portfetch::fetchfiles {{async no} args} {
     variable fetch_urls
     variable urlmap
     variable async_jobs
+    variable async_logid
 
     if {$async} {
         if {[info exists async_jobs]} {
@@ -538,7 +539,7 @@ proc portfetch::fetchfiles {{async no} args} {
                 lappend async_jobs $distfile \
                     [curlwrap_async fetch_file $credentials $fetch_options $urlmap($url_var) \
                         [lmap site $urlmap($url_var) {portfetch::assemble_url $site $distfile}] \
-                        ${distpath}/${distfile}]
+                        ${distpath}/${distfile} $async_logid]
             } else {
                 unset -nocomplain fetched
                 set lastError ""
@@ -605,7 +606,7 @@ proc portfetch::files_present {} {
 }
 
 # Start asynchronous fetch of distfiles
-proc portfetch::fetch_async_start {} {
+proc portfetch::fetch_async_start {logid} {
     global all_dist_files fetch.type
     if {${fetch.type} ne "standard"} {
         # Async only supported for file fetches
@@ -621,6 +622,7 @@ proc portfetch::fetch_async_start {} {
         return 0
     }
     _fetch_start
+    variable async_logid $logid
     fetchfiles yes
 }
 
